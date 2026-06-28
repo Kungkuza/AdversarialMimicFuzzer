@@ -6,10 +6,7 @@ AGENT_HOST = '0.0.0.0'
 AGENT_PORT = 9999
 
 def execute_and_monitor(payload: bytes) -> dict:
-    """
-    Simulates executing the adversary payload or passing it to a local binary.
-    Returns telemetry back to the fuzzer.
-    """
+    # Simulates executing the adversary payload or passing it to a local binary.
     # Write payload to a temporary file for local execution/parsing
     filename = "tmp_payload.bin"
     with open(filename, "wb") as f:

@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify, render_template_string
 from FuzzerCore import CoreEngine, AdversaryProfile
 import threading
+import FuzzerCore
+import time
 
 app = Flask(__name__)
 
@@ -15,39 +17,42 @@ fuzzer_status = {
 def run_fuzzing_loop(agent_ip, agent_port, profile_name, iterations):
     global fuzzer_status
     fuzzer_status["running"] = True
-    fuzzer_status["payloads_sent"] = 0
-    fuzzer_status["crashes"] = []
-    
-    # Configure profile based on selection
-    if profile_name == "APT41":
-        profile = AdversaryProfile("APT41", b"\x4d\x5a", 0xAA)
-    else:
-        profile = AdversaryProfile("Standard-Mimic", b"\x90\x90", 0x55)
-        
-    engine = CoreEngine(agent_ip, int(agent_port), profile)
-    seed = b"initial_fuzz_seed_data"
-    
+    fuzzer_status["total_sent"] = 0
+    fuzzer_status["crashes"] = 0
+
+    print(f"[*] Kicking off background campaign against {agent_ip}:{agent_port}")
+
+    profile = FuzzerCore.AdversaryProfile(name=profile_name)
+    engine = FuzzerCore.CoreEngine(agent_ip, agent_port, profile)
+
+    base_seed = b"A" * 20 
+
     for i in range(iterations):
-        if not fuzzer_status["running"]:  # Check if user hit stop
+        if not fuzzer_status["running"]: # Allow stopping campaigns
             break
-            
-        payload = engine.mutate_and_style(seed)
-        report = engine.send_to_agent(payload)
+
+        # Generate a mutated, styled payload
+        payload = engine.mutate_and_style(base_seed)
+
+        # Send it across the network to the Ubuntu Agent
+        result = engine.send_to_agent(payload)
+
+        # Track results and update stats for your Web UI dashboard
+        fuzzer_status["total_sent"] += 1
         
-        fuzzer_status["payloads_sent"] += 1
-        
-        if report.get("status") in ["crash", "network_error"]:
-            fuzzer_status["last_result"] = f"CRASH/ERROR found on iteration {i}!"
-            fuzzer_status["crashes"].append({
-                "iteration": i,
-                "reason": report.get("reason"),
-                "payload_hex": payload.hex()[:40] + "..."
-            })
+        if result.get("status") == "crash":
+            fuzzer_status["crashes"] += 1
+            print(f"[!] Crash found on iteration {i}! Payload: {payload.hex()}")
+        elif result.get("status") == "network_error":
+            print(f"[!!!] Network connection failed: {result.get('reason')}")
+            fuzzer_status["running"] = False
             break
-        else:
-            fuzzer_status["last_result"] = f"Iteration {i}: Agent responded normally."
-            
+
+        # Tiny sleep so you don't instantly melt the socket buffers
+        time.sleep(0.01)
+
     fuzzer_status["running"] = False
+    print("[*] Fuzzing campaign completed.")
 
 # HTML Dashboard Template directly embedded for simplicity
 HTML_TEMPLATE = """
@@ -118,11 +123,10 @@ def start_fuzzer():
         return "A campaign is already running!", 400
         
     agent_ip = request.form.get('agent_ip')
-    agent_port = request.form.get('agent_port')
+    agent_port = int(request.form.get('agent_port'))
     profile = request.form.get('profile')
     iterations = int(request.form.get('iterations'))
     
-    # Run the fuzzing loop inside a background thread so the web UI doesn't freeze
     threading.Thread(target=run_fuzzing_loop, args=(agent_ip, agent_port, profile, iterations)).start()
     
     return render_template_string('<script>alert("Campaign started successfully!"); window.location.href="/";</script>')

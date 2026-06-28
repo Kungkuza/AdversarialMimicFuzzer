@@ -3,7 +3,7 @@ import random
 import json
 import time
 
-TARGET_AGENT_IP = '127.0.0.1'  # Change to your Agent's VM IP
+TARGET_AGENT_IP = '127.0.0.1'  #placeholder agent IP
 TARGET_AGENT_PORT = 9999
 
 class AdversaryProfile:
