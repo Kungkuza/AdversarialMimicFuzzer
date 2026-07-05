@@ -6,20 +6,27 @@ AGENT_HOST = '0.0.0.0'
 AGENT_PORT = 9999
 
 def execute_and_monitor(payload: bytes) -> dict:
-    # Simulates executing the adversary payload or passing it to a local binary.
-    # Write payload to a temporary file for local execution/parsing
     filename = "tmp_payload.bin"
     with open(filename, "wb") as f:
         f.write(payload)
         
     try:
-        # Simulating passing the payload to a monitored target application
-        # Replace 'python3 mockup_app.py' with your actual target binary
+        # Runs inline python target. It will exit with code 1 if b'\xff\xff' is generated.
         result = subprocess.run(
             ["python3", "-c", f"import sys; data=open('{filename}', 'rb').read(); assert b'\\xff\\xff' not in data"], 
+            #Please add your software name into the arrayacccording to the app youre testing ^^
             capture_output=True, 
             timeout=2
         )
+        
+        # FIX: Check if the sub-process returned an error code (like 1 from AssertionError)
+        if result.returncode != 0:
+            return {
+                "status": "crash",
+                "reason": "Target process returned non-zero status (Assertion/Crash triggered!)",
+                "return_code": result.returncode,
+                "stderr": result.stderr.decode(errors='ignore')
+            }
         
         return {
             "status": "success",
@@ -27,28 +34,26 @@ def execute_and_monitor(payload: bytes) -> dict:
             "stdout": result.stdout.decode(errors='ignore'),
             "stderr": result.stderr.decode(errors='ignore')
         }
-    except subprocess.CalledProcessError as e:
-        return {"status": "crash", "reason": "Process returned non-zero exit code"}
-    except AssertionError:
-        return {"status": "crash", "reason": "Assertion triggered - Vulnerability hit!"}
+    except subprocess.TimeoutExpired:
+        return {"status": "crash", "reason": "Target process hung (TimeoutExpired)"}
     except Exception as e:
         return {"status": "error", "reason": str(e)}
 
 def start_agent():
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Allows rapid restarting
+    server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_sock.bind((AGENT_HOST, AGENT_PORT))
     server_sock.listen(5)
     print(f"[*] Agent listening on {AGENT_HOST}:{AGENT_PORT}...")
 
     while True:
         client_sock, addr = server_sock.accept()
-        # Receive the size prefix first (4 bytes)
         try:
             payload_len_bytes = client_sock.recv(4)
             if not payload_len_bytes: continue
             payload_len = int.from_bytes(payload_len_bytes, byteorder='big')
             
-            # Read the actual payload
             payload = b""
             while len(payload) < payload_len:
                 packet = client_sock.recv(payload_len - len(payload))
@@ -57,7 +62,6 @@ def start_agent():
                 
             print(f"[+] Received {len(payload)} bytes from Fuzzer at {addr[0]}")
             
-            # Run test and send back telemetry
             telemetry = execute_and_monitor(payload)
             response_data = json.dumps(telemetry).encode('utf-8')
             client_sock.sendall(response_data)

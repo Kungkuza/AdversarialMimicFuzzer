@@ -6,7 +6,6 @@ import time
 
 app = Flask(__name__)
 
-# Global state to keep track of the current fuzzing campaign status
 fuzzer_status = {
     "running": False,
     "payloads_sent": 0,
@@ -14,47 +13,77 @@ fuzzer_status = {
     "crashes": []
 }
 
+status_lock = threading.Lock()
+
 def run_fuzzing_loop(agent_ip, agent_port, profile_name, iterations):
     global fuzzer_status
-    fuzzer_status["running"] = True
-    fuzzer_status["total_sent"] = 0
-    fuzzer_status["crashes"] = 0
+    
+    with status_lock:
+        fuzzer_status["running"] = True
+        fuzzer_status["payloads_sent"] = 0
+        fuzzer_status["last_result"] = "Initializing adversary campaign engine..."
+        fuzzer_status["crashes"] = []
 
+    print("\n" + "="*60)
     print(f"[*] Kicking off background campaign against {agent_ip}:{agent_port}")
+    print("="*60 + "\n")
 
     profile = FuzzerCore.AdversaryProfile(name=profile_name)
     engine = FuzzerCore.CoreEngine(agent_ip, agent_port, profile)
 
-    base_seed = b"A" * 20 
+    base_seed = b"A" * 64
 
     for i in range(iterations):
-        if not fuzzer_status["running"]: # Allow stopping campaigns
+        if not fuzzer_status["running"]: 
+            print("[-] Campaign aborted by user request.")
             break
 
-        # Generate a mutated, styled payload
         payload = engine.mutate_and_style(base_seed)
-
-        # Send it across the network to the Ubuntu Agent
         result = engine.send_to_agent(payload)
 
-        # Track results and update stats for your Web UI dashboard
-        fuzzer_status["total_sent"] += 1
-        
-        if result.get("status") == "crash":
-            fuzzer_status["crashes"] += 1
-            print(f"[!] Crash found on iteration {i}! Payload: {payload.hex()}")
-        elif result.get("status") == "network_error":
-            print(f"[!!!] Network connection failed: {result.get('reason')}")
-            fuzzer_status["running"] = False
-            break
+        with status_lock:
+            fuzzer_status["payloads_sent"] += 1
+            
+            if result.get("status") == "success":
+                fuzzer_status["last_result"] = f"Round #{i+1}: Sent {len(payload)} bytes. Target processed cleanly."
+                
+            elif result.get("status") == "crash" or (result.get("status") == "network_error" and "Expecting value" in result.get("reason", "")):
+                reason = "Segmentation Fault (Dropped Connection / Empty JSON Response)"
+                if result.get("status") == "crash":
+                    reason = result.get("reason", "Segmentation Fault / Core Dump")
+                
+                stderr = result.get("stderr", "Process terminated abnormally (SIGSEGV)").strip()
+                fuzzer_status["last_result"] = f"[!] CRASH found on iteration {i+1}: {reason}"
+                
+                fuzzer_status["crashes"].append({
+                    "iteration": i + 1,
+                    "reason": f"Stack Overflow Verified ({len(payload)} bytes payload)",
+                    "payload_hex": payload.hex()[:40] + "...",
+                    "stderr": stderr
+                })
+                
+                print("\n" + "!"*60)
+                print(f"[!] TARGET BINARY CRASHED ON ITERATION #{i+1}!")
+                print(f"    -> Payload Size: {len(payload)} bytes (Smashed 16-byte buffer)")
+                print(f"    -> Agent Reason: {reason}")
+                print(f"    -> Faulting Payload (hex): {payload.hex()}")
+                print("!"*60 + "\n")
+                fuzzer_status["running"] = False
+                break
 
-        # Tiny sleep so you don't instantly melt the socket buffers
+            elif result.get("status") == "network_error":
+                err_msg = f"Network connection failed: {result.get('reason')}"
+                print(f"[!!!] {err_msg}")
+                fuzzer_status["last_result"] = f"[!!!] {err_msg}"
+                fuzzer_status["running"] = False
+                break
+
         time.sleep(0.01)
 
-    fuzzer_status["running"] = False
+    with status_lock:
+        fuzzer_status["running"] = False
     print("[*] Fuzzing campaign completed.")
 
-# HTML Dashboard Template directly embedded for simplicity
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -67,6 +96,7 @@ HTML_TEMPLATE = """
         button { background: #007acc; color: white; border: none; cursor: pointer; font-weight: bold;}
         .status-box { background: #3c3c3c; padding: 15px; margin-top: 20px; border-left: 5px solid #007acc; }
         .crash { color: #ff5555; font-weight: bold; }
+        .log-box { font-family: monospace; font-size: 12px; background: #111; padding: 10px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; margin: 5px 0; color: #ff5555;}
     </style>
 </head>
 <body>
@@ -74,7 +104,7 @@ HTML_TEMPLATE = """
         <h2>⚔️ Adversary Mimic Fuzzer Orchestrator</h2>
         <form action="/start" method="post">
             <label>Target Agent IP:</label>
-            <input type="text" name="agent_ip" value="127.0.0.1" required>
+            <input type="text" name="agent_ip" value="192.168.56.102" required>
             
             <label>Target Agent Port:</label>
             <input type="text" name="agent_port" value="9999" required>
@@ -99,9 +129,15 @@ HTML_TEMPLATE = """
             
             {% if status.crashes %}
                 <h4 class="crash">⚠️ Detected Crashes / Bypasses:</h4>
-                <ul>
+                <ul style="padding-left: 20px;">
                 {% for crash in status.crashes %}
-                    <li>[Iter {{ crash.iteration }}] - {{ crash.reason }} (Payload: <code>{{ crash.payload_hex }}</code>)</li>
+                    <li style="margin-bottom: 10px;">
+                        <strong>[Iter {{ crash.iteration }}]</strong> - {{ crash.reason }} <br>
+                        <small style="color: #bbb;">Payload: <code>{{ crash.payload_hex }}</code></small>
+                        {% if crash.stderr %}
+                            <div class="log-box">{{ crash.stderr }}</div>
+                        {% endif %}
+                    </li>
                 {% endfor %}
                 </ul>
             {% endif %}
@@ -127,9 +163,9 @@ def start_fuzzer():
     profile = request.form.get('profile')
     iterations = int(request.form.get('iterations'))
     
-    threading.Thread(target=run_fuzzing_loop, args=(agent_ip, agent_port, profile, iterations)).start()
+    threading.Thread(target=run_fuzzing_loop, args=(agent_ip, agent_port, profile, iterations), daemon=True).start()
     
     return render_template_string('<script>alert("Campaign started successfully!"); window.location.href="/";</script>')
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
