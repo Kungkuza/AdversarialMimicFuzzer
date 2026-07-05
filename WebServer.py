@@ -27,9 +27,14 @@ def run_fuzzing_loop(agent_ip, agent_port, profile_name, iterations):
     print(f"[*] Kicking off background campaign against {agent_ip}:{agent_port}")
     print("="*60 + "\n")
 
-    profile = FuzzerCore.AdversaryProfile(name=profile_name)
-    engine = FuzzerCore.CoreEngine(agent_ip, agent_port, profile)
+    if profile_name == "Raw-Testing":
+        profile = FuzzerCore.AdversaryProfile(name="Raw-Testing", transparent=True)
+    elif profile_name == "APT41":
+        profile = FuzzerCore.AdversaryProfile(name="APT41", magic_bytes=b"\x4d\x5a", xor_key=0xAA, transparent=False)
+    else:
+        profile = FuzzerCore.AdversaryProfile(name="Standard", magic_bytes=b"\x4d\x5a", xor_key=0x55, transparent=False)
 
+    engine = FuzzerCore.CoreEngine(agent_ip, agent_port, profile)
     base_seed = b"A" * 64
 
     for i in range(iterations):
@@ -56,14 +61,14 @@ def run_fuzzing_loop(agent_ip, agent_port, profile_name, iterations):
                 
                 fuzzer_status["crashes"].append({
                     "iteration": i + 1,
-                    "reason": f"Stack Overflow Verified ({len(payload)} bytes payload)",
+                    "reason": f"Target Disturbance Verified ({len(payload)} bytes payload)",
                     "payload_hex": payload.hex()[:40] + "...",
                     "stderr": stderr
                 })
                 
                 print("\n" + "!"*60)
                 print(f"[!] TARGET BINARY CRASHED ON ITERATION #{i+1}!")
-                print(f"    -> Payload Size: {len(payload)} bytes (Smashed 16-byte buffer)")
+                print(f"    -> Payload Size: {len(payload)} bytes")
                 print(f"    -> Agent Reason: {reason}")
                 print(f"    -> Faulting Payload (hex): {payload.hex()}")
                 print("!"*60 + "\n")
@@ -110,6 +115,7 @@ HTML_TEMPLATE = """
             
             <label>Adversary Profile Style:</label>
             <select name="profile">
+                <option value="Raw-Testing">Raw-Testing (Transparent Direct Mutations)</option>
                 <option value="Standard">Standard-Mimic (NOP Sleds + 0x55 XOR)</option>
                 <option value="APT41">APT41 Mimic (PE Headers + 0xAA XOR)</option>
             </select>

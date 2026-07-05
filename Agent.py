@@ -11,11 +11,12 @@ def execute_and_monitor(payload: bytes) -> dict:
         f.write(payload)
         
     try:
+        target_binary = "./div-zero"
         # Runs inline python target. It will exit with code 1 if b'\xff\xff' is generated.
         result = subprocess.run(
-            ["python3", "-c", f"import sys; data=open('{filename}', 'rb').read(); assert b'\\xff\\xff' not in data"], 
-            #Please add your software name into the arrayacccording to the app youre testing ^^
-            capture_output=True, 
+            [target_binary, payload.decode('utf-8', errors='ignore')], 
+            capture_output=True,
+        text=True, 
             timeout=2
         )
         
