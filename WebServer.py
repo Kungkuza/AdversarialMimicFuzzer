@@ -24,7 +24,6 @@ def run_fuzzing_loop(agent_ip, agent_port, profile_name, iterations):
         fuzzer_status["last_result"] = "Initializing adversary campaign engine..."
         fuzzer_status["crashes"] = []
 
-    print("\n" + "="*60)
     print(f"[*] Kicking off background campaign against {agent_ip}:{agent_port}")
     print("="*60 + "\n")
 
