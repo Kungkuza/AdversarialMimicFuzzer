@@ -15,38 +15,45 @@ class CoreEngine:
         self.agent_port = agent_port
         self.profile = profile
 
-    def mutate_and_style(self, seed: bytes) -> bytes:
-        # FIX 1: Dynamic Length Selection
-        # Alternates between precise short payloads and large buffer smashers
-        if random.random() < 0.4:
-            dynamic_length = random.randint(32, 128)  # Guarantees buffer overflows (>16 bytes)
-        else:
-            dynamic_length = random.randint(4, 12)    # Small payloads for precise logical bugs
+    def mutate_and_style(self, seed: bytes, prefix: bytes = b"", target_type: str = "binary") -> bytes:
+        """
+        Comprehensive Generation and Mutation Layer.
+        - prefix: Mandatory valid bytes that stay untouched to clear initial validation headers.
+        - target_type: Adjusts dictionary payload behavior based on what the C binary expects.
+        """
+        # FIX: Context-Aware Type Generation to pass syntax filters
+        if target_type == "numeric_string":
+            # Boundary strings designed to break conversions like atoi() or arithmetic calculations
+            numeric_triggers = ["0", "-1", "2147483647", "-2147483648", "4294967295", " ", "000000000"]
+            data_zone = random.choice(numeric_triggers).encode('utf-8')
         
-        if len(seed) > 0:
-            base_data = (seed * (dynamic_length // len(seed) + 1))[:dynamic_length]
+        elif target_type == "alphanumeric":
+            # Safe printable ASCII buffers scaled dynamically to bypass binary stripping rules
+            length = random.choice([8, 16, 64, 128])
+            data_zone = bytes(random.choice(range(0x21, 0x7E)) for _ in range(length))
+            
         else:
-            base_data = b"A" * dynamic_length
+            # Default Binary Mode: Alternating short and long structures with intensive injection
+            dynamic_length = random.choice([8, 16, 64, 128])
+            base = (seed * (dynamic_length // len(seed) + 1))[:dynamic_length] if seed else b"A" * dynamic_length
+            mutated = bytearray(base)
             
-        mutated = bytearray(base_data)
-        
-        if len(mutated) > 0:
-            # FIX 2: Enhanced crash trigger dictionary
-            crash_triggers = [0x00, 0xff, 0x7f, 0x80, 0x20, 0x41, 0x0a]
-            
-            # FIX 3: Multi-byte mutation density
-            # Mutates multiple indexes per round so the search space resolves much faster
+            # FIX: High density multi-byte mutations
+            crash_triggers = [0x00, 0xff, 0x7f, 0x80, 0x20, 0x0a]
             num_mutations = random.randint(1, min(3, len(mutated)))
             for _ in range(num_mutations):
                 idx = random.randint(0, len(mutated) - 1)
                 mutated[idx] = random.choice(crash_triggers)
-            
-        # If Transparent mode is active, return raw bytes untouched
+            data_zone = bytes(mutated)
+
+        # FIX: Protocol/Format Pinning (Combine static required path with the mutated target block)
+        final_payload = prefix + data_zone
+
+        # Profile Execution Delivery
         if self.profile.transparent:
-            return bytes(mutated)
+            return final_payload
             
-        # Standard Profile: Apply XOR styling safely
-        encrypted = bytearray(b ^ self.profile.xor_key for b in mutated)
+        encrypted = bytearray(b ^ self.profile.xor_key for b in final_payload)
         return self.profile.magic_bytes + encrypted
 
     def send_to_agent(self, payload: bytes) -> dict:
@@ -60,9 +67,8 @@ class CoreEngine:
             response = sock.recv(4096)
             return json.loads(response.decode('utf-8'))
         except Exception as e:
-            # Catches dropped connection gracefully when the binary terminates mid-packet
+            # FIX: Captures process termination/dropped frames cleanly without throwing an internal engine exception
             return {"status": "network_error", "reason": str(e)}
         finally:
-            # FIX 4: Protected resource cleanup
             if sock is not None:
                 sock.close()
