@@ -5,7 +5,9 @@ in use today.
 Please sift through these sources before continuing
 
 https://go.dev/doc/tutorial/fuzz
+
 https://github.com/antonio-morales/fuzzing101
+
 https://www.youtube.com/watch?v=5SORCfs-Mk0
 
 
