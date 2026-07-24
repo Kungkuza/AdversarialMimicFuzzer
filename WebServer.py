@@ -106,10 +106,10 @@ HTML_TEMPLATE = """
             
             <label>Optimization Target Profile:</label>
             <select name="profile">
-                <option value="Raw-Numeric">Raw-Numeric (Optimized for div-zero math logs)</option>
-                <option value="Raw-Overflow">Raw-Overflow (Optimized for buffer memory logs)</option>
-                <option value="Standard">Standard-Mimic (0x55 Obfuscated Protocol)</option>
-                <option value="APT41">APT41-Mimic (0xAA Obfuscated Protocol)</option>
+                <option value="Raw-Numeric">Raw-Numeric</option>
+                <option value="Raw-Overflow">Raw-Overflow</option>
+                <option value="Standard">Standard-Mimic</option>
+                <option value="APT41">APT41-Mimic</option>
             </select>
             
             <label>Iterations:</label>
